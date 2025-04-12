@@ -10,7 +10,7 @@ use walkdir::WalkDir;
 
 const MAX_SIZE: u64 = 102_400;
 const OUTPUT_FILE: &str = "directory_snapshot.txt";
-const EXCLUDED_DIRS: &[&str] = &[".git", ".venv", "__pycache__", ".github", ".pytest_cache", ".ruff_cache"];
+const EXCLUDED_DIRS: &[&str] = &[".git", ".venv", "__pycache__", ".github", ".pytest_cache", ".ruff_cache", "target"];
 
 fn is_excluded(path: &Path, root: &Path) -> bool {
     EXCLUDED_DIRS.iter().any(|dir| path.starts_with(root.join(dir)))
