@@ -1,32 +1,45 @@
 use chrono::Local;
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::{
     env,
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::Command,
 };
 use walkdir::WalkDir;
 
 const MAX_SIZE: u64 = 102_400;
 const OUTPUT_FILE: &str = "directory_snapshot.txt";
-const EXCLUDED_DIRS: &[&str] = &[".git", ".venv", "__pycache__", ".github", ".pytest_cache", ".ruff_cache", "target"];
 
-fn is_excluded(path: &Path, root: &Path) -> bool {
-    EXCLUDED_DIRS.iter().any(|dir| path.starts_with(root.join(dir)))
+fn build_gitignore(root: &Path) -> Gitignore {
+    let mut builder = GitignoreBuilder::new(root);
+    let gitignore_path = root.join(".gitignore");
+    if gitignore_path.exists() {
+        builder.add(gitignore_path);
+    }
+    builder.build().unwrap()
+}
+
+fn is_excluded(path: &Path, root: &Path, gitignore: &Gitignore) -> bool {
+    let relative_path = path.strip_prefix(root).unwrap_or(path);
+    gitignore.matched(relative_path, path.is_dir()).is_ignore()
 }
 
 fn print_header(writer: &mut impl Write) {
     writeln!(writer, "Directory and File Snapshot - {}", Local::now()).unwrap();
-    writeln!(writer, "======================================================\n").unwrap();
+    writeln!(
+        writer,
+        "======================================================\n"
+    )
+    .unwrap();
 }
 
-fn print_file_type_summary(writer: &mut impl Write, root: &Path) {
+fn print_file_type_summary(writer: &mut impl Write, root: &Path, gitignore: &Gitignore) {
     let mut counts = std::collections::HashMap::new();
 
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         let path = entry.path();
-        if path.is_file() && !is_excluded(path, root) {
+        if path.is_file() && !is_excluded(path, root, gitignore) {
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 *counts.entry(ext.to_lowercase()).or_insert(0) += 1;
             }
@@ -46,36 +59,31 @@ fn print_working_directory(writer: &mut impl Write, path: &Path) {
     writeln!(writer, "Working Directory Full Path:\n{}\n", path.display()).unwrap();
 }
 
-fn print_directory_tree(writer: &mut impl Write, root: &Path) {
+fn print_directory_tree(writer: &mut impl Write, root: &Path, gitignore: &Gitignore) {
     writeln!(
         writer,
-        "Directory Structure Diagram (excluding {}):",
-        EXCLUDED_DIRS.join(", ")
+        "Directory Structure Diagram (excluding entries in .gitignore):"
     )
     .unwrap();
 
-    if let Ok(output) = Command::new("tree")
-        .arg("-a")
-        .arg("-I")
-        .arg(EXCLUDED_DIRS.join("|"))
-        .arg(root)
-        .output()
-    {
-        writer.write_all(&output.stdout).unwrap();
-    } else {
-        for entry in WalkDir::new(root) {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if !is_excluded(path, root) {
-                    writeln!(writer, "{}", path.strip_prefix(root).unwrap().display()).unwrap();
-                }
+    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+        let path = entry.path();
+        if !is_excluded(path, root, gitignore) {
+            if let Ok(rel_path) = path.strip_prefix(root) {
+                writeln!(writer, "{}", rel_path.display()).unwrap();
             }
         }
     }
     writeln!(writer).unwrap();
 }
 
-fn process_files(writer: &mut impl Write, skipped: &mut Vec<String>, root: &Path, output_path: &Path) {
+fn process_files(
+    writer: &mut impl Write,
+    skipped: &mut Vec<String>,
+    root: &Path,
+    output_path: &Path,
+    gitignore: &Gitignore,
+) {
     writeln!(
         writer,
         "======================================================\nIncluded Files (UTF-8 text, <= {} bytes):\n",
@@ -86,10 +94,7 @@ fn process_files(writer: &mut impl Write, skipped: &mut Vec<String>, root: &Path
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         let path = entry.path();
 
-        if path.is_file()
-            && !is_excluded(path, root)
-            && path != output_path
-        {
+        if path.is_file() && !is_excluded(path, root, gitignore) && path != output_path {
             let metadata = match fs::metadata(path) {
                 Ok(meta) => meta,
                 Err(_) => continue,
@@ -112,10 +117,18 @@ fn process_files(writer: &mut impl Write, skipped: &mut Vec<String>, root: &Path
 
             match String::from_utf8(content) {
                 Ok(text) => {
-                    writeln!(writer, "======================================================").unwrap();
+                    writeln!(
+                        writer,
+                        "======================================================"
+                    )
+                    .unwrap();
                     writeln!(writer, "File: {}", path.display()).unwrap();
                     writeln!(writer, "Size: {} bytes", metadata.len()).unwrap();
-                    writeln!(writer, "======================================================").unwrap();
+                    writeln!(
+                        writer,
+                        "======================================================"
+                    )
+                    .unwrap();
                     writeln!(writer, "{}\n", text).unwrap();
                 }
                 Err(_) => {
@@ -131,7 +144,11 @@ fn process_files(writer: &mut impl Write, skipped: &mut Vec<String>, root: &Path
 
 fn print_skipped_summary(writer: &mut impl Write, skipped: &[String]) {
     if !skipped.is_empty() {
-        writeln!(writer, "======================================================").unwrap();
+        writeln!(
+            writer,
+            "======================================================"
+        )
+        .unwrap();
         writeln!(writer, "Skipped Files:\n").unwrap();
         for line in skipped {
             writeln!(writer, "{}", line).unwrap();
@@ -143,6 +160,7 @@ fn main() {
     let target_dir = env::args().nth(1).unwrap_or_else(|| ".".to_string());
     let root = PathBuf::from(&target_dir).canonicalize().unwrap();
     let output_path = root.join(OUTPUT_FILE);
+    let gitignore = build_gitignore(&root);
 
     let file = File::create(&output_path).expect("Could not create output file");
     let mut writer = BufWriter::new(file);
@@ -150,9 +168,9 @@ fn main() {
     let mut skipped: Vec<String> = Vec::new();
 
     print_header(&mut writer);
-    print_file_type_summary(&mut writer, &root);
+    print_file_type_summary(&mut writer, &root, &gitignore);
     print_working_directory(&mut writer, &root);
-    print_directory_tree(&mut writer, &root);
-    process_files(&mut writer, &mut skipped, &root, &output_path);
+    print_directory_tree(&mut writer, &root, &gitignore);
+    process_files(&mut writer, &mut skipped, &root, &output_path, &gitignore);
     print_skipped_summary(&mut writer, &skipped);
 }
