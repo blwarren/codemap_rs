@@ -6,23 +6,23 @@ use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 const MAX_SIZE: u64 = 102_400;
 const OUTPUT_FILE: &str = "directory_snapshot.txt";
 
 fn build_gitignore(root: &Path) -> Gitignore {
     let mut builder = GitignoreBuilder::new(root);
-    let gitignore_path = root.join(".gitignore");
-    if gitignore_path.exists() {
-        builder.add(gitignore_path);
-    }
-    builder.build().unwrap()
+    builder.add(root.join(".gitignore"));
+    builder.build().expect("Failed to build gitignore")
 }
 
-fn is_excluded(path: &Path, root: &Path, gitignore: &Gitignore) -> bool {
-    let relative_path = path.strip_prefix(root).unwrap_or(path);
-    gitignore.matched(relative_path, path.is_dir()).is_ignore()
+fn is_excluded(entry: &DirEntry, root: &Path, gitignore: &Gitignore) -> bool {
+    let path = entry.path();
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    gitignore
+        .matched_path_or_any_parents(relative, path.is_dir())
+        .is_ignore()
 }
 
 fn print_header(writer: &mut impl Write) {
@@ -38,8 +38,11 @@ fn print_file_type_summary(writer: &mut impl Write, root: &Path, gitignore: &Git
     let mut counts = std::collections::HashMap::new();
 
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+        if is_excluded(&entry, root, gitignore) {
+            continue;
+        }
         let path = entry.path();
-        if path.is_file() && !is_excluded(path, root, gitignore) {
+        if path.is_file() {
             if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                 *counts.entry(ext.to_lowercase()).or_insert(0) += 1;
             }
@@ -67,13 +70,16 @@ fn print_directory_tree(writer: &mut impl Write, root: &Path, gitignore: &Gitign
     .unwrap();
 
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+        if is_excluded(&entry, root, gitignore) {
+            continue;
+        }
+
         let path = entry.path();
-        if !is_excluded(path, root, gitignore) {
-            if let Ok(rel_path) = path.strip_prefix(root) {
-                writeln!(writer, "{}", rel_path.display()).unwrap();
-            }
+        if let Ok(rel_path) = path.strip_prefix(root) {
+            writeln!(writer, "{}", rel_path.display()).unwrap();
         }
     }
+
     writeln!(writer).unwrap();
 }
 
@@ -92,51 +98,56 @@ fn process_files(
     .unwrap();
 
     for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+        if is_excluded(&entry, root, gitignore) {
+            continue;
+        }
+
         let path = entry.path();
+        if path == output_path || !path.is_file() {
+            continue;
+        }
 
-        if path.is_file() && !is_excluded(path, root, gitignore) && path != output_path {
-            let metadata = match fs::metadata(path) {
-                Ok(meta) => meta,
-                Err(_) => continue,
-            };
+        let metadata = match fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
 
-            if metadata.len() > MAX_SIZE {
-                skipped.push(format!(
-                    "Skipped (too large >{}B): {} (Size: {} bytes)",
-                    MAX_SIZE,
-                    path.display(),
-                    metadata.len()
-                ));
-                continue;
+        if metadata.len() > MAX_SIZE {
+            skipped.push(format!(
+                "Skipped (too large >{}B): {} (Size: {} bytes)",
+                MAX_SIZE,
+                path.display(),
+                metadata.len()
+            ));
+            continue;
+        }
+
+        let content = match fs::read(path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        match String::from_utf8(content) {
+            Ok(text) => {
+                writeln!(
+                    writer,
+                    "======================================================"
+                )
+                .unwrap();
+                writeln!(writer, "File: {}", path.display()).unwrap();
+                writeln!(writer, "Size: {} bytes", metadata.len()).unwrap();
+                writeln!(
+                    writer,
+                    "======================================================"
+                )
+                .unwrap();
+                writeln!(writer, "{}\n", text).unwrap();
             }
-
-            let content = match fs::read(path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            match String::from_utf8(content) {
-                Ok(text) => {
-                    writeln!(
-                        writer,
-                        "======================================================"
-                    )
-                    .unwrap();
-                    writeln!(writer, "File: {}", path.display()).unwrap();
-                    writeln!(writer, "Size: {} bytes", metadata.len()).unwrap();
-                    writeln!(
-                        writer,
-                        "======================================================"
-                    )
-                    .unwrap();
-                    writeln!(writer, "{}\n", text).unwrap();
-                }
-                Err(_) => {
-                    skipped.push(format!(
-                        "Skipped (binary or invalid UTF-8): {}",
-                        path.display()
-                    ));
-                }
+            Err(_) => {
+                skipped.push(format!(
+                    "Skipped (binary or invalid UTF-8): {}",
+                    path.display()
+                ));
             }
         }
     }
