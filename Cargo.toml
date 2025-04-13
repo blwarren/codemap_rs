@@ -7,3 +7,7 @@ edition = "2024"
 chrono = "0.4.40"
 ignore = "0.4.23"
 walkdir = "2.5.0"
+
+[dev-dependencies]
+tempfile = "3.19.1"
+walkdir = "2.5.0"

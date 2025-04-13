@@ -1,12 +1,9 @@
-mod filter;
-mod snapshot;
-mod walk;
-
-use crate::filter::build_gitignore;
-use crate::snapshot::{
+use codemap_rs::filter::build_gitignore;
+use codemap_rs::snapshot::{
     print_directory_tree, print_file_type_summary, print_header, print_skipped_summary,
     print_working_directory, process_files,
 };
+
 use std::{env, fs::File, io::BufWriter, path::PathBuf};
 
 const OUTPUT_FILE: &str = "directory_snapshot.txt";
