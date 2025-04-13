@@ -20,6 +20,12 @@ fn build_gitignore(root: &Path) -> Gitignore {
 fn is_excluded(entry: &DirEntry, root: &Path, gitignore: &Gitignore) -> bool {
     let path = entry.path();
     let relative = path.strip_prefix(root).unwrap_or(path);
+
+    // Manually exclude .git directory
+    if relative.components().any(|c| c.as_os_str() == ".git") {
+        return true;
+    }
+
     gitignore
         .matched_path_or_any_parents(relative, path.is_dir())
         .is_ignore()
