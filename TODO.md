@@ -1,6 +1,6 @@
 # TODO: codemap_rs Development Roadmap
 
-A list of planned improvements and feature ideas for `codemap_rs`. Prioritize and edit as needed.
+A list of planned improvements and feature ideas for `codemap_rs`.
 
 ---
 
