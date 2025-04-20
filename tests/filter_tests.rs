@@ -1,6 +1,6 @@
 use codemap_rs::filter::{build_gitignore, is_excluded};
 use ignore::gitignore::Gitignore;
-use std::fs::{create_dir_all, File};
+use std::fs::{File, create_dir_all};
 use std::io::Write;
 use std::path::Path;
 use tempfile::tempdir;
@@ -28,11 +28,17 @@ fn test_gitignore_excludes_target() {
     // Create a file that should be ignored
     let ignored_dir = root.join("target");
     create_dir_all(&ignored_dir).unwrap();
-    File::create(ignored_dir.join("ignored.txt")).unwrap().write_all(b"test").unwrap();
+    File::create(ignored_dir.join("ignored.txt"))
+        .unwrap()
+        .write_all(b"test")
+        .unwrap();
 
     // Create a file that should not be ignored
     let included_file = root.join("src.txt");
-    File::create(&included_file).unwrap().write_all(b"keep me").unwrap();
+    File::create(&included_file)
+        .unwrap()
+        .write_all(b"keep me")
+        .unwrap();
 
     let gitignore: Gitignore = build_gitignore(root);
 
